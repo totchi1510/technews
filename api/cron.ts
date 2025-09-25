@@ -1,6 +1,5 @@
 // api/cron.ts
 // Vercel Cron から叩かれて、Qiita/ITmediaの人気記事をDiscordに投稿
-import type { VercelRequest, VercelResponse } from "@vercel/node";
 import cheerio from "cheerio";
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL!;
@@ -8,8 +7,9 @@ const QIITA_TOKEN = process.env.QIITA_TOKEN ?? "";
 
 // ---- Qiita ----
 type QiitaItem = { title: string; url: string; likes_count?: number };
+type LinkItem = { title: string; url: string; note?: string };
 
-async function fetchQiitaTop3() {
+async function fetchQiitaTop3(): Promise<LinkItem[]> {
   const now = new Date();
   const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   const jstYesterday = new Date(jstNow.getTime() - 24 * 60 * 60 * 1000);
@@ -36,8 +36,6 @@ async function fetchQiitaTop3() {
 }
 
 // ---- ITmedia ----
-type LinkItem = { title: string; url: string; note?: string };
-
 async function fetchITMediaTop3(): Promise<LinkItem[]> {
   const res = await fetch("https://www.itmedia.co.jp/ranking/", {
     headers: { "User-Agent": "vercel-cron/1.0" },
@@ -51,13 +49,12 @@ async function fetchITMediaTop3(): Promise<LinkItem[]> {
     const t = $(el).text().trim();
     const href = $(el).attr("href") || "";
     if (!t || !href) return;
-    // ★ ここが未完で止まっていたので、必ず文字列を閉じる！
-    if (!href.startsWith("https://www.itmedia.co.jp")) return;
-    if (t.length < 8) return; // タイトルが短すぎるものは除外
+    if (!href.startsWith("https://www.itmedia.co.jp")) return; // ★ここが未完で落ちていました
+    if (t.length < 8) return;
     links.push({ title: t, url: href });
   });
 
-  // 重複URLを除去して先頭3件
+  // 重複URL除去 → 先頭3件
   const seen = new Set<string>();
   const unique: LinkItem[] = [];
   for (const l of links) {
@@ -68,7 +65,7 @@ async function fetchITMediaTop3(): Promise<LinkItem[]> {
   return unique.slice(0, 3);
 }
 
-// ---- Discord 投稿 ----
+// ---- Discord 送信 ----
 function buildDiscordMessage(qiita: LinkItem[], itm: LinkItem[]) {
   const a =
     "**Qiita 人気記事**\n" +
@@ -79,7 +76,8 @@ function buildDiscordMessage(qiita: LinkItem[], itm: LinkItem[]) {
   return `${a}\n\n${b}`;
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+// 型を使わず any でOK（@vercel/node は不要）
+export default async function handler(req: any, res: any) {
   try {
     if (!DISCORD_WEBHOOK_URL) throw new Error("DISCORD_WEBHOOK_URL is not set");
     const [q, i] = await Promise.all([fetchQiitaTop3(), fetchITMediaTop3()]);
