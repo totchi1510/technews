@@ -1,14 +1,13 @@
+// api/cron.ts
+// Vercel Cron から叩かれて、Qiita/ITmediaの人気記事をDiscordに投稿
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import cheerio from "cheerio";
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL!;
 const QIITA_TOKEN = process.env.QIITA_TOKEN ?? "";
 
-type QiitaItem = {
-  title: string;
-  url: string;
-  likes_count: number;
-};
+// ---- Qiita ----
+type QiitaItem = { title: string; url: string; likes_count?: number };
 
 async function fetchQiitaTop3() {
   const now = new Date();
@@ -36,7 +35,10 @@ async function fetchQiitaTop3() {
     }));
 }
 
-async function fetchITMediaTop3() {
+// ---- ITmedia ----
+type LinkItem = { title: string; url: string; note?: string };
+
+async function fetchITMediaTop3(): Promise<LinkItem[]> {
   const res = await fetch("https://www.itmedia.co.jp/ranking/", {
     headers: { "User-Agent": "vercel-cron/1.0" },
   });
@@ -44,37 +46,55 @@ async function fetchITMediaTop3() {
   const html = await res.text();
   const $ = cheerio.load(html);
 
-  const links: { title: string; url: string }[] = [];
+  const links: LinkItem[] = [];
   $("a").each((_, el) => {
     const t = $(el).text().trim();
     const href = $(el).attr("href") || "";
     if (!t || !href) return;
+    // ★ ここが未完で止まっていたので、必ず文字列を閉じる！
     if (!href.startsWith("https://www.itmedia.co.jp")) return;
-    if (t.length < 8) return; // タイトルが短すぎるものを除外
+    if (t.length < 8) return; // タイトルが短すぎるものは除外
     links.push({ title: t, url: href });
   });
 
-  return links.slice(0, 3).map((it) => ({ ...it, note: "" }));
+  // 重複URLを除去して先頭3件
+  const seen = new Set<string>();
+  const unique: LinkItem[] = [];
+  for (const l of links) {
+    if (seen.has(l.url)) continue;
+    seen.add(l.url);
+    unique.push(l);
+  }
+  return unique.slice(0, 3);
+}
+
+// ---- Discord 投稿 ----
+function buildDiscordMessage(qiita: LinkItem[], itm: LinkItem[]) {
+  const a =
+    "**Qiita 人気記事**\n" +
+    qiita.map((x, i) => `${i + 1}. ${x.title}\n${x.url}${x.note ? `\n${x.note}` : ""}`).join("\n\n");
+  const b =
+    "**ITmedia 人気記事**\n" +
+    itm.map((x, i) => `${i + 1}. ${x.title}\n${x.url}`).join("\n\n");
+  return `${a}\n\n${b}`;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    const [qiita, itmedia] = await Promise.all([fetchQiitaTop3(), fetchITMediaTop3()]);
-    const content =
-      "**Qiita 人気記事**\n" +
-      qiita.map((x, i) => `${i + 1}. ${x.title}\n${x.url} (${x.note})`).join("\n\n") +
-      "\n\n**ITmedia 人気記事**\n" +
-      itmedia.map((x, i) => `${i + 1}. ${x.title}\n${x.url}`).join("\n\n");
+    if (!DISCORD_WEBHOOK_URL) throw new Error("DISCORD_WEBHOOK_URL is not set");
+    const [q, i] = await Promise.all([fetchQiitaTop3(), fetchITMediaTop3()]);
+    const content = buildDiscordMessage(q, i);
 
-    await fetch(DISCORD_WEBHOOK_URL, {
+    const r = await fetch(DISCORD_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
     });
+    if (!r.ok) throw new Error(`Discord webhook error: ${r.status} ${await r.text()}`);
 
     res.status(200).send("ok");
-  } catch (err: any) {
-    console.error(err);
-    res.status(500).send(err.message ?? "error");
+  } catch (e: any) {
+    console.error(e);
+    res.status(500).send(e?.message ?? "error");
   }
 }
