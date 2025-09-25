@@ -1,6 +1,7 @@
 // api/cron.ts
 // Vercel Cron から叩かれて、Qiita/ITmediaの人気記事をDiscordに投稿
 import * as cheerio from "cheerio";   // ← これ！
+import iconv from "iconv-lite";
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL!;
 const QIITA_TOKEN = process.env.QIITA_TOKEN ?? "";
@@ -41,7 +42,8 @@ async function fetchITMediaTop3(): Promise<LinkItem[]> {
     headers: { "User-Agent": "vercel-cron/1.0" },
   });
   if (!res.ok) throw new Error(`ITmedia ranking error: ${res.status}`);
-  const html = await res.text();
+  const buf  Buffer.from(await res.arrayBuffer());
+  const html = iconv.decode(buf, "Shift_JIS");
   const $ = cheerio.load(html);
 
   const links: LinkItem[] = [];
