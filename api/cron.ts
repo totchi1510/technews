@@ -1,6 +1,6 @@
 // api/cron.ts
 // Vercel Cron から叩かれて、Qiita/ITmediaの人気記事をDiscordに投稿
-import cheerio from "cheerio";
+import * as cheerio from "cheerio";   // ← これ！
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL!;
 const QIITA_TOKEN = process.env.QIITA_TOKEN ?? "";
